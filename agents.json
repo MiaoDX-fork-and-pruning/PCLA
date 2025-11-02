@@ -13,8 +13,8 @@
             "config": "/home/vortex/PCLA/pcla_agents/carl_pretrained/Roach_0_"
         },
         "plant": {
-            "agent": "pcla_agents/plant/PlanT_agent.py",
-            "config": "pcla_agents/plant/config/eval.yaml"
+            "agent": "pcla_agents/transfuserpp/plant_agent.py",
+            "config": "pcla_agents/transfuserpp_pretrained/longest6/plant_all_1"
         }
     },
     "tf":{
