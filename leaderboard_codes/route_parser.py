@@ -67,10 +67,40 @@ class RouteParser(object):
             new_config.scenario_file = scenario_file
 
             waypoint_list = []  # the list of waypoints that can be found on this route
-            for waypoint in route.iter('waypoint'):
-                waypoint_list.append(carla.Location(x=float(waypoint.attrib['x']),
-                                                    y=float(waypoint.attrib['y']),
-                                                    z=float(waypoint.attrib['z'])))
+
+            # Prefer the PCLA schema first: <waypoint .../>
+            wp_nodes = list(route.iter('waypoint'))
+            if wp_nodes:
+                for waypoint in wp_nodes:
+                    waypoint_list.append(
+                        carla.Location(
+                            x=float(waypoint.attrib['x']),
+                            y=float(waypoint.attrib['y']),
+                            z=float(waypoint.attrib.get('z', 0.0)),
+                        )
+                    )
+                try:
+                    print(f"[PCLA RouteParser] schema=PCLA id={route_id} town={new_config.town} n={len(waypoint_list)}")
+                except Exception:
+                    pass
+            else:
+                # Fallback to Leaderboard schema: <waypoints><position .../></waypoints>
+                wpts = route.find('waypoints')
+                if wpts is not None:
+                    pos_nodes = list(wpts.findall('position'))
+                    for pos in pos_nodes:
+                        waypoint_list.append(
+                            carla.Location(
+                                x=float(pos.attrib['x']),
+                                y=float(pos.attrib['y']),
+                                z=float(pos.attrib.get('z', 0.0)),
+                            )
+                        )
+                try:
+                    schema = 'LB' if waypoint_list else 'UNKNOWN'
+                    print(f"[PCLA RouteParser] schema={schema} id={route_id} town={new_config.town} n={len(waypoint_list)}")
+                except Exception:
+                    pass
 
             new_config.trajectory = waypoint_list
 

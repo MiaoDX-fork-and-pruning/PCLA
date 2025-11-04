@@ -70,6 +70,8 @@ class ObsManager(ObsManagerBase):
       map_folder = 'maps'
 
     self._map_dir = Path(__file__).resolve().parent / map_folder
+    if not self._map_dir.exists():
+      self._map_dir = Path(__file__).resolve().parent / 'maps'
 
     super().__init__()
 
@@ -85,6 +87,13 @@ class ObsManager(ObsManagerBase):
     self.criteria_stop = criteria_stop
 
     maps_h5_path = self._map_dir / (self._world.get_map().name + '.h5')
+    if not maps_h5_path.exists():
+      fallback_dir = Path(__file__).resolve().parent / 'maps'
+      fallback_path = fallback_dir / (self._world.get_map().name + '.h5')
+      if fallback_path.exists():
+        maps_h5_path = fallback_path
+      else:
+        raise FileNotFoundError(f"Missing BEV map assets for {self._world.get_map().name} at {maps_h5_path}")
     with h5py.File(maps_h5_path, 'r', libver='latest', swmr=True) as hf:
       self._road = np.array(hf['road'], dtype=np.uint8)
       self._lane_marking_all = np.array(hf['lane_marking_all'], dtype=np.uint8)

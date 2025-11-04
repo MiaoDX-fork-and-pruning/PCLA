@@ -101,6 +101,10 @@
         "l6": {
             "agent": "pcla_agents/transfuserpp/sensor_agent.py",
             "config": "pcla_agents/transfuserpp_pretrained/longest6/tfpp_all_"
+        },
+        "autopilot": {
+            "agent": "pcla_agents/transfuserpp/autopilot.py",
+            "config": "pcla_agents/transfuserpp/config.py"
         }
     },
     "neat": {

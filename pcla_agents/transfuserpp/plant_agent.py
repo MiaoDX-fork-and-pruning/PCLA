@@ -179,6 +179,34 @@ class PlanTAgent(DataAgent):
 
     pred_bbs = torch.stack(pred_bbs, dim=0).mean(dim=0)
 
+    # -------------------------
+    # NaN diagnostics (best effort)
+    # -------------------------
+    try:
+      def _nan_stats(t, name):
+        if t is None:
+          return
+        if isinstance(t, list):
+          for idx, ti in enumerate(t):
+            _nan_stats(ti, f"{name}[{idx}]")
+          return
+        if isinstance(t, torch.Tensor):
+          n = torch.isnan(t).sum().item()
+          i = torch.isinf(t).sum().item()
+          if n or i:
+            mn = torch.nanmin(t).item() if torch.isfinite(t).any() else float('nan')
+            mx = torch.nanmax(t).item() if torch.isfinite(t).any() else float('nan')
+            print(f"[NaNDiag] step={self.step} {name}: nan={n} inf={i} min={mn:.4f} max={mx:.4f}")
+
+      # Check stacked/averaged predictions when available
+      _nan_stats(self.pred_wp if hasattr(self, 'pred_wp') else None, 'pred_wp_mean')
+      _nan_stats(pred_wps, 'pred_wps')
+      if self.config.use_controller_input_prediction:
+        _nan_stats(torch.stack(pred_target_speeds, dim=0) if len(pred_target_speeds)>0 else None, 'pred_target_speeds')
+        _nan_stats(torch.stack(pred_checkpoints, dim=0) if len(pred_checkpoints)>0 else None, 'pred_checkpoints')
+    except Exception:
+      pass
+
     if self.config.use_controller_input_prediction:
       pred_target_speed = torch.stack(pred_target_speeds, dim=0).mean(dim=0)
       pred_aim_wp = torch.stack(pred_checkpoints, dim=0).mean(dim=0)

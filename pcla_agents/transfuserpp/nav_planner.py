@@ -3,6 +3,7 @@ Some helpful classes for planning and control for the privileged autopilot
 """
 
 import math
+import carla
 from copy import deepcopy
 from collections import deque
 import xml.etree.ElementTree as ET
@@ -150,22 +151,51 @@ def interpolate_trajectory(world_map, waypoints_trajectory, hop_resolution=1.0, 
         trajectory going to be made
     """
 
-  dao = GlobalRoutePlannerDAO(world_map, hop_resolution)
-  grp = GlobalRoutePlanner(dao)
-  grp.setup()
-  # Obtain route plan
+  # If the input waypoints are already dense (e.g., ~1 m spacing from ENU),
+  # skip road-network interpolation to avoid GRP-induced U-turns on opposite lanes.
+  def _avg_spacing(locations):
+    if len(locations) < 2:
+      return float('inf')
+    d = 0.0
+    n = 0
+    for a, b in zip(locations, locations[1:]):
+      dx = float(b.x - a.x)
+      dy = float(b.y - a.y)
+      d += (dx * dx + dy * dy) ** 0.5
+      n += 1
+    return d / max(n, 1)
+
+  dense_threshold = 2.0  # meters
+  avg_step = _avg_spacing(waypoints_trajectory)
   route = []
-  # Goes until the one before the last.
-  for i in range(len(waypoints_trajectory) - 1):
-    waypoint = waypoints_trajectory[i]
-    waypoint_next = waypoints_trajectory[i + 1]
-    if waypoint.x != waypoint_next.x or waypoint.y != waypoint_next.y:
-      interpolated_trace = grp.trace_route(waypoint, waypoint_next)
-      if len(interpolated_trace) > max_len:
-        waypoints_trajectory[i + 1] = waypoints_trajectory[i]
-      else:
-        for wp_tuple in interpolated_trace:
-          route.append((wp_tuple[0].transform, wp_tuple[1]))
+
+  if avg_step <= dense_threshold:
+    # Build a simple, unidirectional route using straight segments; mark as LANEFOLLOW.
+    from agents.navigation.local_planner import RoadOption
+    last_yaw = 0.0
+    for i, wp in enumerate(waypoints_trajectory):
+      if i < len(waypoints_trajectory) - 1:
+        nxt = waypoints_trajectory[i + 1]
+        dyaw = math.degrees(math.atan2(float(nxt.y - wp.y), float(nxt.x - wp.x)))
+        last_yaw = dyaw
+      tf = carla.Transform(carla.Location(x=float(wp.x), y=float(wp.y), z=float(getattr(wp, 'z', 0.0))),
+                           carla.Rotation(pitch=0.0, roll=0.0, yaw=float(last_yaw)))
+      route.append((tf, RoadOption.LANEFOLLOW))
+  else:
+    # Fall back to road-network interpolation (original behavior)
+    dao = GlobalRoutePlannerDAO(world_map, hop_resolution)
+    grp = GlobalRoutePlanner(dao)
+    grp.setup()
+    for i in range(len(waypoints_trajectory) - 1):
+      waypoint = waypoints_trajectory[i]
+      waypoint_next = waypoints_trajectory[i + 1]
+      if waypoint.x != waypoint_next.x or waypoint.y != waypoint_next.y:
+        interpolated_trace = grp.trace_route(waypoint, waypoint_next)
+        if len(interpolated_trace) > max_len:
+          waypoints_trajectory[i + 1] = waypoints_trajectory[i]
+        else:
+          for wp_tuple in interpolated_trace:
+            route.append((wp_tuple[0].transform, wp_tuple[1]))
 
   lat_ref, lon_ref = _get_latlon_ref(world_map)
 

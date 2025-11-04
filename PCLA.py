@@ -8,6 +8,7 @@
 import importlib
 import os
 import sys
+import math
 
 # Ensure we can import pcla_functions regardless of where this script is called from
 pcla_dir = os.path.dirname(os.path.abspath(__file__))
@@ -23,6 +24,8 @@ from leaderboard_codes.timer import GameTime
 from leaderboard_codes.route_indexer import RouteIndexer
 from leaderboard_codes.route_manipulation import interpolate_trajectory
 from leaderboard_codes.sensor_interface import CallBack, OpenDriveMapReader, SpeedometerReader
+from leaderboard_codes.local_planner import RoadOption
+from leaderboard_codes.route_manipulation import _get_latlon_ref, location_route_to_gps
 
 class PCLA():
     def __init__(self, agent, vehicle, route, client):
@@ -66,7 +69,38 @@ class PCLA():
         route_indexer = RouteIndexer(self.routePath, scenarios, 1)
         config = route_indexer.next()
         
-        gps_route, route = interpolate_trajectory(self.world, config.trajectory)
+        traj = config.trajectory
+
+        # Toggle: set PCLA_ROUTE_DIRECT=1 to use parsed waypoints as-is (no GRP).
+        force_direct = os.getenv("PCLA_ROUTE_DIRECT", "0").lower() in ("1", "true", "yes")
+
+        if force_direct:
+            try:
+                import carla  # local import
+                if len(traj) < 2:
+                    print("[PCLA Route] strategy=DIRECT (env) but insufficient waypoints; falling back to GRP")
+                    gps_route, route = interpolate_trajectory(self.world, traj)
+                else:
+                    lat_ref, lon_ref = _get_latlon_ref(self.world)
+                    route = []
+                    last_yaw = 0.0
+                    for i, loc in enumerate(traj):
+                        if i < len(traj) - 1:
+                            nxt = traj[i + 1]
+                            last_yaw = math.degrees(math.atan2(float(nxt.y - loc.y), float(nxt.x - loc.x)))
+                        tf = carla.Transform(
+                            carla.Location(x=float(loc.x), y=float(loc.y), z=float(getattr(loc, "z", 0.0))),
+                            carla.Rotation(pitch=0.0, roll=0.0, yaw=float(last_yaw)),
+                        )
+                        route.append((tf, RoadOption.LANEFOLLOW))
+                    gps_route = location_route_to_gps(route, lat_ref, lon_ref)
+                    print(f"[PCLA Route] strategy=DIRECT (env) N={len(traj)}")
+            except Exception as exc:
+                print(f"[PCLA Route] DIRECT failed: {exc}; falling back to GRP")
+                gps_route, route = interpolate_trajectory(self.world, traj)
+        else:
+            gps_route, route = interpolate_trajectory(self.world, traj)
+            print(f"[PCLA Route] strategy=GRP (default) N={len(traj)}")
 
         self.agent_instance.set_global_plan(gps_route, route)
 
