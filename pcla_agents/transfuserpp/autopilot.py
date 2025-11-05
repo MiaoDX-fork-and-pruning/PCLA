@@ -16,7 +16,9 @@ import numpy as np
 import carla
 
 from srunner.scenariomanager.carla_data_provider import CarlaDataProvider
-from leaderboard.autoagents import autonomous_agent, autonomous_agent_local
+# Use PCLA's local leaderboard shims to match constructor and __call__ signatures
+from leaderboard_codes import autonomous_agent2 as autonomous_agent
+from leaderboard_codes import autonomous_agent2 as autonomous_agent_local
 from nav_planner import PIDController, RoutePlanner, interpolate_trajectory, extrapolate_waypoint_route
 from config import GlobalConfig
 import transfuser_utils as t_u
@@ -156,24 +158,28 @@ class AutoPilot(autonomous_agent_local.AutonomousAgent):
     # Near node
     self.world_map = carla.Map('RouteMap', hd_map[1]['opendrive'])
     trajectory = [item[0].location for item in self._global_plan_world_coord]
-    self.dense_route, _ = interpolate_trajectory(self.world_map, trajectory)
+    # Obtain both GPS and world-frame routes; use world frame for planners to
+    # match tick_autopilot() which provides positions in world XY.
+    dense_route_gps, dense_route_world = interpolate_trajectory(self.world_map, trajectory)
+    self.dense_route = dense_route_world
 
     print('Sparse Waypoints:', len(self._global_plan))
     print('Dense Waypoints:', len(self.dense_route))
 
     self._waypoint_planner = RoutePlanner(self.config.dense_route_planner_min_distance,
                                           self.config.dense_route_planner_max_distance)
-    self._waypoint_planner.set_route(self.dense_route, True)
+    self._waypoint_planner.set_route(self.dense_route, False)
     self._waypoint_planner.save()
 
     self._waypoint_planner_extrapolation = RoutePlanner(self.config.dense_route_planner_min_distance,
                                                         self.config.dense_route_planner_max_distance)
-    self._waypoint_planner_extrapolation.set_route(self.dense_route, True)
+    self._waypoint_planner_extrapolation.set_route(self.dense_route, False)
     self._waypoint_planner_extrapolation.save()
 
     # Far node
     self._command_planner = RoutePlanner(self.config.route_planner_min_distance, self.config.route_planner_max_distance)
-    self._command_planner.set_route(self._global_plan, True)
+    # Use the world-frame transforms for the far planner as well.
+    self._command_planner.set_route(self._global_plan_world_coord, False)
 
     # Privileged
     self._vehicle = CarlaDataProvider.get_hero_actor()
@@ -265,6 +271,45 @@ class AutoPilot(autonomous_agent_local.AutonomousAgent):
     self._waypoint_planner.load()
     waypoint_route = self._waypoint_planner.run_step(pos)
     self._waypoint_planner.save()
+    # Guard against empty route (can happen if the upstream plan was collapsed).
+    if len(waypoint_route) == 0:
+      # Safe full-brake fallback and minimal data payload for PlanT consumers.
+      control = carla.VehicleControl()
+      control.steer = 0.0
+      control.throttle = 0.0
+      control.brake = 1.0
+
+      # Minimal data: provide at least one route point and zero target points
+      # so downstream modules can pad and proceed without indexing errors.
+      fallback = {
+          'pos_global': pos.tolist() if hasattr(pos, 'tolist') else list(pos),
+          'theta': tick_data['compass'],
+          'speed': tick_data['speed'],
+          'target_speed': 0.0,
+          'target_point': [0.0, 0.0],
+          'target_point_next': [0.0, 0.0],
+          'command': self.commands[-2],
+          'next_command': self.next_commands[-2],
+          'aim_wp': [0.0, 0.0],
+          'route': [[0.0, 0.0]],
+          'steer': 0.0,
+          'throttle': 0.0,
+          'brake': True,
+          'control_brake': True,
+          'junction': False,
+          'vehicle_hazard': False,
+          'light_hazard': False,
+          'walker_hazard': False,
+          'stop_sign_hazard': False,
+          'stop_sign_close': False,
+          'walker_close': False,
+          'angle': 0.0,
+          'augmentation_translation': self.augmentation_translation[0],
+          'augmentation_rotation': self.augmentation_rotation[0],
+          'ego_matrix': self._vehicle.get_transform().get_matrix()
+      }
+      return control, fallback
+
     _, near_command = waypoint_route[1] if len(waypoint_route) > 1 else waypoint_route[0]
 
     self.remaining_route = waypoint_route

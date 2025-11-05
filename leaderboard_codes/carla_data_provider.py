@@ -701,6 +701,20 @@ class CarlaDataProvider(object):  # pylint: disable=too-many-public-methods
         return False
 
     @staticmethod
+    def set_hero_actor(actor):
+        """
+        Set the hero actor by ensuring it has the 'hero' role_name and registering it.
+        """
+        # Ensure the actor has the 'hero' role_name attribute
+        if hasattr(actor, 'attributes'):
+            actor.attributes['role_name'] = 'hero'
+
+        # Register the actor if not already registered
+        if actor not in CarlaDataProvider._carla_actor_pool.values():
+            CarlaDataProvider._carla_actor_pool[actor.id] = actor
+            CarlaDataProvider.register_actor(actor)
+
+    @staticmethod
     def get_hero_actor():
         """
         Get the actor object of the hero actor if it exists, returns none otherwise.

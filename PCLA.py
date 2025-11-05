@@ -40,7 +40,23 @@ class PCLA():
     def set(self, agent, vehicle, route, client):
         self.client = client
         self.world = client.get_world()
+
+        # Initialize BOTH CarlaDataProvider instances (srunner and leaderboard_codes)
+        # srunner version is used by autopilot.py
+        from srunner.scenariomanager.carla_data_provider import CarlaDataProvider as SRunnerCDP
+        SRunnerCDP.set_client(self.client)
+        SRunnerCDP.set_world(self.world)
         self.vehicle = vehicle
+        # Manually add vehicle to srunner pool
+        SRunnerCDP._carla_actor_pool[vehicle.id] = vehicle
+        SRunnerCDP.register_actor(vehicle)
+
+        # leaderboard_codes version is used by sensor_interface.py
+        from leaderboard_codes.carla_data_provider import CarlaDataProvider as LeaderboardCDP
+        LeaderboardCDP.set_client(self.client)
+        LeaderboardCDP.set_world(self.world)
+        LeaderboardCDP.set_hero_actor(self.vehicle)
+
         self.routePath = route
         self._watchdog = Watchdog(260) # TODO: Increase timeout if needed for large models
         self.setup_agent(agent)

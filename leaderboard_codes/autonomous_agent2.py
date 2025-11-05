@@ -15,6 +15,7 @@ import carla
 from .timer import GameTime
 
 from .route_manipulation import downsample_route
+import os
 from .sensor_interface import SensorInterface
 
 class Track(Enum):
@@ -112,16 +113,33 @@ class AutonomousAgent(object):
 
         # print('======[Agent] Wallclock_time = {} / {} / Sim_time = {} / {}x'.format(wallclock, wallclock_diff, timestamp, timestamp/(wallclock_diff+0.001)))
 
-        control = self.run_step(input_data = input_data, timestamp = timestamp, vehicle = vehicle)
+        control = self.run_step(input_data = input_data, timestamp = timestamp)
         control.manual_gear_shift = False
 
         return control
 
     def set_global_plan(self, global_plan_gps, global_plan_world_coord):
         """
-        Set the plan (route) for the agent
+        Set the plan (route) for the agent (opt-in downsampling).
+
+        Env:
+          - PCLA_ROUTE_DENSE=1 keeps all points (default)
+          - PCLA_ROUTE_SAMPLE_M sets downsample distance (meters)
         """
-        self.dense_global_plan_world_coord = global_plan_world_coord # Used for CaRL
-        ds_ids = downsample_route(global_plan_world_coord, 50)
-        self._global_plan_world_coord = [(global_plan_world_coord[x][0], global_plan_world_coord[x][1]) for x in ds_ids]
-        self._global_plan = [global_plan_gps[x] for x in ds_ids]
+        self.dense_global_plan_world_coord = global_plan_world_coord  # Used for CaRL
+        dense_flag = os.getenv('PCLA_ROUTE_DENSE', '1').lower() in ('1', 'true', 'yes')
+        sample_env = os.getenv('PCLA_ROUTE_SAMPLE_M')
+
+        if dense_flag and not sample_env:
+            ids = list(range(len(global_plan_world_coord)))
+        elif sample_env:
+            try:
+                sample_m = int(float(sample_env))
+            except Exception:
+                sample_m = 50
+            ids = downsample_route(global_plan_world_coord, sample_m)
+        else:
+            ids = list(range(len(global_plan_world_coord)))
+
+        self._global_plan_world_coord = [(global_plan_world_coord[x][0], global_plan_world_coord[x][1]) for x in ids]
+        self._global_plan = [global_plan_gps[x] for x in ids]
