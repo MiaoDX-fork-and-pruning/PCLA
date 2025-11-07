@@ -16,7 +16,18 @@ import numpy as np
 import carla
 
 from srunner.scenariomanager.carla_data_provider import CarlaDataProvider
-from leaderboard.autoagents import autonomous_agent, autonomous_agent_local
+
+_mode = os.getenv('PCLA_MODE', 'dora').strip().lower()
+if _mode in ('standalone', 'direct', 'pcla', 'api', 'config'):
+    from leaderboard_codes import autonomous_agent2 as autonomous_agent
+    from leaderboard_codes import autonomous_agent2 as autonomous_agent_local
+elif _mode in ('dora', 'lb', 'leaderboard', 'bridge', 'sockets'):
+    from leaderboard.autoagents import autonomous_agent, autonomous_agent_local
+else:
+    raise RuntimeError(
+        "PCLA_MODE must be 'dora' (default) or 'standalone' (with aliases). "
+        "Got: '{}'.".format(_mode or '(empty)')
+    )
 from nav_planner import PIDController, RoutePlanner, interpolate_trajectory, extrapolate_waypoint_route
 from config import GlobalConfig
 import transfuser_utils as t_u
@@ -238,7 +249,7 @@ class AutoPilot(autonomous_agent_local.AutonomousAgent):
 
     return result
 
-  def run_step(self, input_data, timestamp, sensors=None, plant=False):  # pylint: disable=locally-disabled, unused-argument
+  def run_step(self, input_data, timestamp, sensors=None, plant=False, vehicle=None):  # pylint: disable=locally-disabled, unused-argument
     self.step += 1
     if not self.initialized:
       if 'hd_map' in input_data.keys():

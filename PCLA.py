@@ -44,6 +44,33 @@ class PCLA():
         self.client = client
         self.world = client.get_world()
         self.vehicle = vehicle
+        # Initialize CarlaDataProvider for both srunner and local leaderboard shims
+        try:
+            from srunner.scenariomanager.carla_data_provider import CarlaDataProvider as SRunnerCDP  # type: ignore
+            SRunnerCDP.set_client(self.client)
+            SRunnerCDP.set_world(self.world)
+            # Ensure hero vehicle is present in the actor pool
+            try:
+                SRunnerCDP._carla_actor_pool[vehicle.id] = vehicle  # type: ignore[attr-defined]
+                SRunnerCDP.register_actor(vehicle)
+            except Exception:
+                pass
+        except Exception:
+            # srunner may be unavailable in some contexts
+            pass
+
+        try:
+            from leaderboard_codes.carla_data_provider import CarlaDataProvider as LeaderboardCDP
+            LeaderboardCDP.set_client(self.client)
+            LeaderboardCDP.set_world(self.world)
+            # Best-effort: register hero into local provider pool for consumers that query hero
+            try:
+                LeaderboardCDP._carla_actor_pool[vehicle.id] = vehicle  # type: ignore[attr-defined]
+                LeaderboardCDP.register_actor(vehicle)
+            except Exception:
+                pass
+        except Exception:
+            pass
         self.routePath = route
         self._watchdog = Watchdog(260) # TODO: Increase timeout if needed for large models
         self.setup_agent(agent)
@@ -58,9 +85,35 @@ class PCLA():
         module_name = os.path.basename(self.agentPath).split('.')[0]
         sys.path.insert(0, os.path.dirname(self.agentPath))
         module_agent = importlib.import_module(module_name)
-        
+
         agent_class_name = getattr(module_agent, 'get_entry_point')()
-        self.agent_instance = getattr(module_agent, agent_class_name)(self.configPath)
+        AgentClass = getattr(module_agent, agent_class_name)
+
+        # Explicit constructor mode selection to support both standalone and Dora styles.
+        # - PCLA_MODE=lb      → leaderboard-style ctor (host, port, debug), then call setup(config)
+        # - PCLA_MODE=direct  → PCLA-style ctor with config path only
+        mode = os.getenv('PCLA_MODE', 'dora').strip().lower()
+
+        # Interpret mode strictly; single env controls everything.
+        # - Dora/bridge path uses leaderboard-style constructors (host/port)
+        # - Standalone path uses config-path constructors
+        if mode in ('lb', 'leaderboard', 'dora', 'bridge', 'sockets'):
+            host = os.getenv('CARLA_HOST', 'carla-sim')
+            port_env = os.getenv('CARLA_PORT', '2000')
+            try:
+                port = int(port_env)
+            except ValueError:
+                raise RuntimeError(f"Invalid CARLA_PORT='{port_env}'. Must be an integer.")
+            self.agent_instance = AgentClass(host, port, debug=False)
+            # Leaderboard base does not call setup() in __init__; invoke explicitly
+            self.agent_instance.setup(self.configPath)
+        elif mode in ('standalone', 'direct', 'pcla', 'api', 'config'):
+            self.agent_instance = AgentClass(self.configPath)
+        else:
+            raise RuntimeError(
+                "PCLA_MODE must be one of ['dora','leaderboard','lb','bridge','sockets'] "
+                "or ['standalone','direct','pcla','api','config']."
+            )
 
         self._watchdog.stop()
 
@@ -70,37 +123,8 @@ class PCLA():
         config = route_indexer.next()
         
         traj = config.trajectory
-
-        # Toggle: set PCLA_ROUTE_DIRECT=1 to use parsed waypoints as-is (no GRP).
-        force_direct = os.getenv("PCLA_ROUTE_DIRECT", "0").lower() in ("1", "true", "yes")
-
-        if force_direct:
-            try:
-                import carla  # local import
-                if len(traj) < 2:
-                    print("[PCLA Route] strategy=DIRECT (env) but insufficient waypoints; falling back to GRP")
-                    gps_route, route = interpolate_trajectory(self.world, traj)
-                else:
-                    lat_ref, lon_ref = _get_latlon_ref(self.world)
-                    route = []
-                    last_yaw = 0.0
-                    for i, loc in enumerate(traj):
-                        if i < len(traj) - 1:
-                            nxt = traj[i + 1]
-                            last_yaw = math.degrees(math.atan2(float(nxt.y - loc.y), float(nxt.x - loc.x)))
-                        tf = carla.Transform(
-                            carla.Location(x=float(loc.x), y=float(loc.y), z=float(getattr(loc, "z", 0.0))),
-                            carla.Rotation(pitch=0.0, roll=0.0, yaw=float(last_yaw)),
-                        )
-                        route.append((tf, RoadOption.LANEFOLLOW))
-                    gps_route = location_route_to_gps(route, lat_ref, lon_ref)
-                    print(f"[PCLA Route] strategy=DIRECT (env) N={len(traj)}")
-            except Exception as exc:
-                print(f"[PCLA Route] DIRECT failed: {exc}; falling back to GRP")
-                gps_route, route = interpolate_trajectory(self.world, traj)
-        else:
-            gps_route, route = interpolate_trajectory(self.world, traj)
-            print(f"[PCLA Route] strategy=GRP (default) N={len(traj)}")
+        # Use GlobalRoutePlanner interpolation for stability (matches pcla_work branch)
+        gps_route, route = interpolate_trajectory(self.world, traj)
 
         self.agent_instance.set_global_plan(gps_route, route)
 

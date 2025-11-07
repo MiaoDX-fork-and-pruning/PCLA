@@ -14,7 +14,7 @@
         },
         "plant": {
             "agent": "pcla_agents/transfuserpp/plant_agent.py",
-            "config": "pcla_agents/transfuserpp_pretrained/longest6/plant_all_1"
+            "config": "pcla_agents/transfuserpp_pretrained/longest6/plant_all_"
         }
     },
     "tf":{

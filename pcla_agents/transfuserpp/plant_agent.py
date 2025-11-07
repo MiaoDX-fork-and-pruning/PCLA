@@ -98,7 +98,7 @@ class PlanTAgent(DataAgent):
     return result
 
   @torch.inference_mode()
-  def run_step(self, input_data, timestamp, sensors=None, plant=False):  # pylint: disable=locally-disabled, unused-argument
+  def run_step(self, input_data, timestamp, sensors=None, plant=False, vehicle=None):  # pylint: disable=locally-disabled, unused-argument
     if not ('hd_map' in input_data.keys()) and not self.initialized:
       control = carla.VehicleControl()
       control.steer = 0.0
